@@ -1,7 +1,9 @@
 # 连接池 & 线程池配置计算器
 
 在线地址：**[maimai-git.github.io/pool-calculator](https://maimai-git.github.io/pool-calculator/pool-calculator.html)**
-
+<p align="center">
+  <img src="屏幕截图_28-6-2026_23463_maimai-git.github.io.jpeg" width="600" alt="计算器截图">
+</p>
 ---
 
 ## 这是什么
