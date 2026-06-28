@@ -37,3 +37,16 @@ open pool-calculator.html
 ```
 
 纯前端，无需安装、无后端依赖。
+
+---
+
+## 调研参考
+
+- [HikariCP Pool Sizing (Brett Wooldridge)](https://deepwiki.com/brettwooldridge/HikariCP/4.2-pool-sizing-and-performance-tuning) — 官方公式 `connections = CPU×2 + disk_count`
+- [Connection Pool Sizing with Little's Law](https://www.michal-drozd.com/en/blog/connection-pool-littles-law/) — `pool = QPS × avg_query_duration`
+- [PostgreSQL max_connections Performance Impacts (Cybertec)](https://www.cybertec-postgresql.com/en/max_connections-performance-impacts/) — 实测：512 空闲连接 TPS 下降 15%，建议 ≤300
+- [pg-tuning-guide](https://github.com/edisedis777/pg-tuning-guide) — PgSQL 参数公式 `max_connections = (vCPU × 3) × 2`
+- [Percona PgSQL max_connections Advisory](https://docs.percona.com/percona-monitoring-and-management/3/advisors/checks/configuration-pg-high-max-connections.html) — 建议 max_connections ≤300，超出必上 PgBouncer
+- [Go database/sql Production Best Practices (Leapcell)](https://leapcell.io/blog/resource-pooling-in-go-explained) — MaxOpenConns ≤ 80% × DB max, ConnMaxLifetime < DB timeout
+- [Tomcat 高性能调优指南 (阿里云开发者)](https://developer.aliyun.com/article/1681498) — 4 核 I/O 密集型 maxThreads 200-300
+- [Swoole/Hyperf worker_num 生产配置 (PHP 中文网)](https://www.php.cn/faq/2493393.html) — `worker_num = swoole_cpu_num() × 2`（I/O 密集）
