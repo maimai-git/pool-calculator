@@ -1,3 +1,5 @@
+<sub>[中文](README.md) | [English](README_EN.md)</sub>
+
 # 连接池 & 线程池配置计算器
 
 在线地址：**[maimai-git.github.io/pool-calculator](https://maimai-git.github.io/pool-calculator/pool-calculator.html)**

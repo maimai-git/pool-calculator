@@ -1,3 +1,5 @@
+<sub>[中文](README.md) | [English](README_EN.md)</sub>
+
 # Connection Pool & Thread Pool Calculator
 
 Live: **[maimai-git.github.io/pool-calculator](https://maimai-git.github.io/pool-calculator/pool-calculator.html)**
