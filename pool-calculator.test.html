@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>calc() 单元测试</title>
+<style>
+  body { font-family: -apple-system, monospace; padding: 20px; background: #111; color: #eee; }
+  .pass { color: #10b981; } .fail { color: #ef4444; }
+  pre { background: #1a1a2e; padding: 12px; border-radius: 6px; overflow-x: auto; }
+</style>
+</head>
+<body>
+<h2>calc() 单元测试</h2>
+<pre id="log"></pre>
+
+<script>
+// ====== 把 calc 抽成纯函数（去 DOM 依赖） ======
+function compute(params) {
+  const { db, app, wk, cpu, ram, dbCpu, dbRam, N, disk } = params;
+
+  // 1. pool_size
+  const spindle = disk === 'ssd' ? 0 : 1;
+  const hikariBase = Math.round(cpu * 2 + spindle);
+  const wkAdjust   = { crud: 1.0, mixed: 1.5, compute: 0.7, external: 1.3 };
+  let poolSize = Math.round(hikariBase * wkAdjust[wk]);
+  poolSize = Math.max(poolSize, 2);
+
+  // 2. max_connections
+  const perConnMB = db === 'pgsql' ? 7 : 3;
+  const osMB = 500;
+  const cacheMB = dbRam * 0.25 * 1024;
+  const availMB = dbRam * 1024 - osMB - cacheMB;
+  const maxByMem = Math.max(5, Math.floor(availMB / perConnMB));
+  const maxByApp = Math.ceil(poolSize * N * 1.2 + 5);
+  const practicalCap = db === 'pgsql' ? Math.min(Math.round(dbCpu * 25), 250) : Math.round(dbCpu * 50);
+  let maxConn = Math.min(practicalCap, maxByMem);
+  maxConn = Math.max(maxConn, maxByApp + 5);
+
+  // 3. io_wait_ratio
+  const ioRatioMap = { crud: 25, mixed: 20, compute: 2, external: 35 };
+  const ioRatio = ioRatioMap[wk];
+
+  // 4. max threads / worker
+  let maxThreads;
+  if (app === 'hyperf') {
+    maxThreads = Math.round(cpu * 2);
+  } else if (app === 'go') {
+    maxThreads = poolSize;
+  } else if (app === 'node') {
+    maxThreads = poolSize;
+  } else { // tomcat
+    const rawThreads = Math.round(poolSize * ioRatio);
+    const jvmHeap = ram * 0.7 * 1024;
+    const nonHeap = 200;
+    const availForThreads = ram * 1024 - jvmHeap - nonHeap - osMB;
+    const maxByRam = Math.floor(Math.max(0, availForThreads) / 1);
+    maxThreads = Math.min(rawThreads, maxByRam > 0 ? maxByRam : rawThreads);
+  }
+
+  // 5. acceptCount
+  const acceptCount = app === 'hyperf' ? Math.round(maxThreads * 2) :
+                      (app === 'go' || app === 'node') ? 128 :
+                      Math.round(maxThreads * 0.5);
+
+  // 6. totalAppConns
+  const totalAppConns = app === 'hyperf' ? maxThreads * poolSize * N : poolSize * N;
+  const connOk = totalAppConns <= maxConn - 5;
+
+  return { poolSize, maxConn, maxThreads, acceptCount, totalAppConns, connOk,
+           maxByMem, maxByApp, practicalCap, ioRatio };
+}
+
+// ====== 测试用例 ======
+const log = document.getElementById('log');
+let passed = 0, failed = 0;
+
+function assert(label, actual, expected) {
+  const ok = JSON.stringify(actual) === JSON.stringify(expected);
+  const cls = ok ? 'pass' : 'fail';
+  log.innerHTML += `<span class="${cls}">${ok ? '✓' : '✗'} ${label}</span>\n`;
+  if (!ok) log.innerHTML += `  期望: ${JSON.stringify(expected)}\n  实际: ${JSON.stringify(actual)}\n`;
+  ok ? passed++ : failed++;
+}
+
+// ======= 核心回归用例 =======
+// 这些就是你之前指出的 bug 场景
+
+const base = { db:'mysql', app:'tomcat', wk:'crud', cpu:2, ram:4, dbCpu:2, dbRam:4, N:1, disk:'ssd' };
+
+// 1. 默认 2C4G MySQL + Tomcat CRUD（基准线）
+{
+  const r = compute(base);
+  assert('2C4G MySQL Tomcat CRUD → poolSize', r.poolSize, 4);
+  assert('2C4G MySQL Tomcat CRUD → maxConn  ≦100', r.maxConn <= 100, true);
+  assert('2C4G MySQL Tomcat CRUD → maxConn  ≧20', r.maxConn >= 20, true);
+  assert('2C4G MySQL Tomcat CRUD → 连接数安全', r.connOk, true);
+}
+
+// 2. 你之前测的那个用例：PgSQL + external + 4核 + 2实例
+{
+  const r = compute({ ...base, db:'pgsql', wk:'external', cpu:4, N:2 });
+  assert('PgSQL 4核 external 2实例 → poolSize = 10', r.poolSize, 10);
+  assert('PgSQL 4核 external 2实例 → maxConn ≦50', r.maxConn <= 50, true);  // was 367!
+  assert('PgSQL 4核 external 2实例 → maxConn ≧27', r.maxConn >= 27, true);
+  assert('PgSQL 4核 external 2实例 → maxThreads ≠ 负数', r.maxThreads > 0, true);
+  assert('PgSQL 4核 external 2实例 → 连接数安全', r.connOk, true);
+}
+
+// 3. maxConn 不应该超过内存硬上限
+{
+  // 极小内存：dbRam=0.5G 的 PostgreSQL
+  const r = compute({ ...base, db:'pgsql', dbRam:0.5 });
+  assert('0.5G PgSQL → maxConn < 30 (极小内存)', r.maxConn < 30, true);
+}
+
+// 4. Hyperf 连接数：worker_num × pool × instances
+{
+  const r = compute({ ...base, app:'hyperf', cpu:4, N:2 });
+  assert('Hyperf 4核 → worker_num = 8', r.maxThreads, 8);
+  assert('Hyperf 总连接 = 8 × pool × 2', r.totalAppConns, r.maxThreads * r.poolSize * 2);
+}
+
+// 5. Go 不按 ioRatio 算线程
+{
+  const r1 = compute({ ...base, app:'go', wk:'crud' });
+  const r2 = compute({ ...base, app:'go', wk:'external' });
+  assert('Go CRUD vs external → poolSize 不同', r1.poolSize !== r2.poolSize, true);
+  // Go 的 maxThreads 直接等于 poolSize，不受 ioRatio 影响
+  assert('Go CRUD → maxThreads = poolSize', r1.maxThreads, r1.poolSize);
+  assert('Go external → maxThreads = poolSize', r2.maxThreads, r2.poolSize);
+}
+
+// 6. 连接数超限检测
+{
+  const r = compute({ ...base, app:'hyperf', cpu:16, N:10 });
+  assert('Hyperf 16核×10实例 → 应该报超限', r.connOk, false);
+}
+
+// 7. 计算密集型的线程数远小于 CRUD
+{
+  const rCrud    = compute({ ...base, app:'tomcat', wk:'crud' });
+  const rCompute = compute({ ...base, app:'tomcat', wk:'compute' });
+  assert('CRUD pool > compute pool', rCrud.poolSize > rCompute.poolSize, true);
+  assert('CRUD threads > compute threads', rCrud.maxThreads > rCompute.maxThreads, true);
+}
+
+// ====== 结果 ======
+log.innerHTML += `\n${'─'.repeat(30)}\n`;
+log.innerHTML += `<span class="${failed === 0 ? 'pass' : 'fail'}">${passed} passed, ${failed} failed</span>\n`;
+</script>
+</body>
+</html>

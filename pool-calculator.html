@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>连接池 & 线程池配置计算器</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f0f2f5;
+    color: #1a1a2e;
+    padding: 24px;
+  }
+  .container { max-width: 680px; margin: 0 auto; }
+  h1 {
+    font-size: 22px; font-weight: 700; margin-bottom: 6px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .subtitle { font-size: 13px; color: #6b7280; margin-bottom: 20px; }
+
+  .card {
+    background: #fff; border-radius: 10px; padding: 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06); margin-bottom: 16px;
+  }
+  .card-title { font-size: 13px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px; }
+
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .col { flex: 1; min-width: 140px; }
+
+  label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; color: #374151; }
+  select, input {
+    width: 100%; padding: 8px 10px; font-size: 14px;
+    border: 1px solid #d1d5db; border-radius: 6px;
+    background: #fff; color: #1a1a2e;
+    appearance: none; -webkit-appearance: none;
+  }
+  select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M6 8L1 3h10z' fill='%236b7280'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; padding-right: 28px; }
+  input[type=number] { font-variant-numeric: tabular-nums; }
+
+  .results { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .result-item {
+    background: #f9fafb; border-radius: 8px; padding: 14px;
+    border: 1px solid #e5e7eb;
+  }
+  .result-item.full { grid-column: 1 / -1; }
+  .result-label { font-size: 12px; color: #6b7280; margin-bottom: 4px; font-weight: 500; }
+  .result-value { font-size: 26px; font-weight: 700; color: #1a1a2e; }
+  .result-value small { font-size: 13px; font-weight: 400; color: #9ca3af; }
+  .result-warn { font-size: 12px; color: #ef4444; margin-top: 4px; }
+  .result-ok { font-size: 12px; color: #10b981; margin-top: 4px; }
+
+  .formula-box {
+    background: #fefce8; border: 1px solid #fde68a;
+    border-radius: 8px; padding: 12px 14px; font-size: 12px;
+    color: #92400e; line-height: 1.7;
+  }
+  .formula-box code { background: #fef3c7; padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+
+  .tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 4px; margin-left: 4px; font-weight: 500; }
+  .tag-mysql { background: #dbeafe; color: #1e40af; }
+  .tag-pgsql { background: #ede9fe; color: #6d28d9; }
+  .tag-tomcat { background: #d1fae5; color: #065f46; }
+  .tag-hyperf { background: #fce7f3; color: #9d174d; }
+
+  @media (max-width: 480px) {
+    .results { grid-template-columns: 1fr; }
+    .col { min-width: 100%; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>连接池 & 线程池配置计算器</h1>
+  <div class="subtitle">基于 HikariCP 公式 + IO等待比，换框架/换库一键出数</div>
+
+  <div class="card">
+    <div class="card-title">环境参数</div>
+    <div class="row">
+      <div class="col">
+        <label>数据库</label>
+        <select id="dbType">
+          <option value="mysql">MySQL</option>
+          <option value="pgsql">PostgreSQL</option>
+        </select>
+      </div>
+      <div class="col">
+        <label>应用框架</label>
+        <select id="appType">
+          <option value="tomcat">Tomcat / Spring Boot</option>
+          <option value="hyperf">Hyperf / Swoole</option>
+          <option value="go">Go (database/sql)</option>
+          <option value="node">Node.js</option>
+        </select>
+      </div>
+      <div class="col">
+        <label>业务类型</label>
+        <select id="workload">
+          <option value="crud">轻量 CRUD API</option>
+          <option value="mixed">混合（含报表查询）</option>
+          <option value="compute">计算密集</option>
+          <option value="external">大量外部调用</option>
+        </select>
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <div class="col">
+        <label>CPU 核数（应用侧）</label>
+        <input type="number" id="cpu" value="2" min="1" max="64" step="0.5">
+      </div>
+      <div class="col">
+        <label>内存 GB（应用侧）</label>
+        <input type="number" id="ram" value="4" min="0.5" max="256" step="0.5">
+      </div>
+      <div class="col">
+        <label>数据库 CPU 核数</label>
+        <input type="number" id="dbCpu" value="2" min="1" max="64" step="0.5">
+      </div>
+      <div class="col">
+        <label>数据库内存 GB</label>
+        <input type="number" id="dbRam" value="4" min="0.5" max="512" step="0.5">
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <div class="col">
+        <label>应用实例数</label>
+        <input type="number" id="instanceCount" value="1" min="1" max="100">
+      </div>
+      <div class="col">
+        <label>磁盘类型</label>
+        <select id="diskType">
+          <option value="ssd">SSD</option>
+          <option value="hdd">HDD</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" id="resultCard">
+    <div class="card-title">计算结果</div>
+    <div class="results" id="results"></div>
+    <div class="formula-box" id="formulaBox" style="margin-top:14px;"></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+['dbType','appType','workload','cpu','ram','dbCpu','dbRam','instanceCount','diskType']
+  .forEach(id => { $(id).addEventListener('input', calc); $(id).addEventListener('change', calc); });
+
+function calc() {
+  const db     = $('dbType').value;
+  const app    = $('appType').value;
+  const wk     = $('workload').value;
+  const cpu    = parseFloat($('cpu').value) || 2;
+  const ram    = parseFloat($('ram').value) || 4;
+  const dbCpu  = parseFloat($('dbCpu').value) || 2;
+  const dbRam  = parseFloat($('dbRam').value) || 4;
+  const N      = parseInt($('instanceCount').value) || 1;
+  const disk   = $('diskType').value;
+
+  // ========== 1. 数据库连接池大小 ==========
+  const spindle = disk === 'ssd' ? 0 : 1;
+  const hikariBase = Math.round(cpu * 2 + spindle);
+  const wkAdjust   = { crud: 1.0, mixed: 1.5, compute: 0.7, external: 1.3 };
+  let poolSize = Math.round(hikariBase * wkAdjust[wk]);
+  poolSize = Math.max(poolSize, 2);
+
+  // ========== 2. 数据库 max_connections ==========
+  const perConnMB = db === 'pgsql' ? 7 : 3;
+  const osMB      = 500;
+  const cacheMB   = dbRam * 0.25 * 1024;
+  const availMB   = dbRam * 1024 - osMB - cacheMB;
+  const maxByMem   = Math.max(5, Math.floor(availMB / perConnMB)); // 内存硬上限, 最少 5
+  const maxByApp   = Math.ceil(poolSize * N * 1.2 + 5);             // 应用最低需求
+  const practicalCap = db === 'pgsql' ? Math.min(Math.round(dbCpu * 25), 250) : Math.round(dbCpu * 50);
+  let maxConn = Math.min(practicalCap, maxByMem);                   // 先取 实践上限 vs 内存
+  maxConn = Math.max(maxConn, maxByApp + 5);                        // 至少覆盖应用需求
+
+  // ========== 3. IO 等待比 ==========
+  const ioRatioMap = { crud: 25, mixed: 20, compute: 2, external: 35 };
+  const ioRatio = ioRatioMap[wk];
+
+  // ========== 4. 应用线程 / worker ==========
+  let maxThreads, threadFormula;
+  if (app === 'hyperf') {
+    maxThreads = Math.round(cpu * 2);
+    threadFormula = `worker_num = ${cpu}核 × 2 = ${maxThreads}`;
+  } else if (app === 'go') {
+    maxThreads = poolSize;
+    threadFormula = `goroutine 不限，DB连接池上限 = ${maxThreads}`;
+  } else if (app === 'node') {
+    maxThreads = poolSize;
+    threadFormula = `event-loop 单线程，DB连接池上限 = ${maxThreads}`;
+  } else {
+    // Tomcat / Spring
+    const rawThreads = Math.round(poolSize * ioRatio);
+    const jvmHeap = ram * 0.7 * 1024;
+    const nonHeap = 200;
+    const availForThreads = ram * 1024 - jvmHeap - nonHeap - osMB;
+    const maxByRam = Math.floor(Math.max(0, availForThreads) / 1);
+    maxThreads = Math.min(rawThreads, maxByRam > 0 ? maxByRam : rawThreads);
+    threadFormula = `${poolSize} × ${ioRatio}(io_wait) = ${rawThreads}`;
+    if (rawThreads > maxThreads) {
+      threadFormula += ` → 内存约束 min(${rawThreads}, ${maxByRam}) = ${maxThreads}`;
+    }
+  }
+
+  // ========== 5. acceptCount / backlog ==========
+  const acceptCount = app === 'hyperf' ? Math.round(maxThreads * 2) :
+                      app === 'go' || app === 'node' ? 128 :
+                      Math.round(maxThreads * 0.5);
+
+  // ========== 6. 连接数安全校验 ==========
+  const totalAppConns = app === 'hyperf'
+    ? maxThreads * poolSize * N
+    : poolSize * N;
+  const connOk = totalAppConns <= maxConn - 5;
+
+  // ========== 渲染结果卡片 ==========
+  const dbBadge = db === 'mysql'
+    ? '<span class="tag tag-mysql">MySQL</span>'
+    : '<span class="tag tag-pgsql">PgSQL</span>';
+  const appBadge = app === 'tomcat' ? '<span class="tag tag-tomcat">Tomcat</span>'
+    : app === 'hyperf' ? '<span class="tag tag-hyperf">Swoole</span>'
+    : app === 'go' ? '<span class="tag" style="background:#cffafe;color:#155e75">Go</span>'
+    : '<span class="tag" style="background:#ecfccb;color:#3f6212">Node</span>';
+
+  let html = '';
+  html += `<div class="result-item"><div class="result-label">数据库连接池 ${dbBadge}</div><div class="result-value">${poolSize}</div></div>`;
+  html += `<div class="result-item"><div class="result-label">DB max_connections</div><div class="result-value">${maxConn}</div></div>`;
+  html += `<div class="result-item"><div class="result-label">应用线程 / Worker ${appBadge}</div><div class="result-value">${maxThreads}</div></div>`;
+  html += `<div class="result-item"><div class="result-label">acceptCount / backlog</div><div class="result-value">${acceptCount}</div></div>`;
+
+  html += `<div class="result-item full"><div class="result-label">总连接数检查</div>`;
+  html += `<div class="result-value">${totalAppConns} <small>/ ${maxConn - 5} 可用</small></div>`;
+  if (!connOk) {
+    html += `<div class="result-warn">超限！调小连接池或减少实例数，或加大 DB max_connections</div>`;
+  } else {
+    html += `<div class="result-ok">安全余量充足</div>`;
+  }
+  html += `</div>`;
+
+	  if (db === 'pgsql' && totalAppConns > 50 && connOk) {
+	    html += `<div class="result-item full"><div class="result-label">PgBouncer 建议</div>`;
+	    html += `<div style="font-size:13px;line-height:1.6;color:#92400e;">`;
+	    html += `PostgreSQL 进程模型下，空闲连接也会消耗内存和快照开销。`;
+	    html += `业界实测（Cybertec）：512 连接时 TPS 下降约 15%。`;
+	    html += `建议部署 <strong>PgBouncer</strong>（事务池模式），将应用连接收敛到 `;
+	    html += `<strong>${Math.round(dbCpu * 3)}~${Math.round(dbCpu * 6)}</strong> 个 DB 后端。`;
+	    html += `</div></div>`;
+	  }
+
+  $('results').innerHTML = html;
+
+  // ========== 渲染公式链路 ==========
+  const totalExplain = app === 'hyperf'
+    ? `${maxThreads} worker × ${poolSize} 池 × ${N} 实例`
+    : `${poolSize} 池 × ${N} 实例`;
+
+  $('formulaBox').innerHTML = [
+    `<strong>计算链路</strong>`,
+    ``,
+    `1. <code>pool_size</code> = ${cpu}核 × 2 + ${spindle}(${disk}) = ${hikariBase}`,
+    `   → ×${wkAdjust[wk]}(业务系数: ${wk}) = <strong>${poolSize}</strong>`,
+    ``,
+    `2. <code>max_connections</code>`,
+    `   实践上限(${db}Cpu × ${db === 'pgsql' ? 25 + ' ≤250' : 50}) = ${practicalCap}`,
+    `   内存硬上限 (${dbRam}G − OS − cache) / ${perConnMB}MB = ${maxByMem}`,
+    `   应用需求 ceil(${poolSize}池 × ${N}实例 × 1.2 + 5) = ${maxByApp}`,
+    `   → min(实践上限, 内存) = ${Math.min(practicalCap, maxByMem)}`,
+    `   → max(上一步, 应用需求+5) = <strong>${maxConn}</strong>`,
+    ``,
+    `3. 线程 / Worker`,
+    `   io_wait_ratio = ${ioRatio}（${wk}）`,
+    `   → ${threadFormula} = <strong>${maxThreads}</strong>`,
+    ``,
+    `4. 连接数校验`,
+    `   ${totalExplain} = <strong>${totalAppConns}</strong> ≤ ${maxConn - 5} → ${connOk ? '✓ 通过' : '✗ 超限'}`,
+  ].join('<br>');
+}
+
+calc();
+</script>
+</body>
+</html>
